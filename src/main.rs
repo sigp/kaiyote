@@ -5,6 +5,7 @@ use axum::{
     routing::post,
     Router,
 };
+use clap::Parser;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -15,20 +16,42 @@ enum InterceptAction {
     Block,
 }
 
-type InterceptRules = Arc<RwLock<HashMap<String, InterceptAction>>>;
+#[derive(Clone)]
+struct AppState {
+    intercept_rules: Arc<RwLock<HashMap<String, InterceptAction>>>,
+    target_url: String,
+}
+
+#[derive(Parser)]
+#[command(name = "kaiyote")]
+#[command(about = "HTTP proxy middleware with route interception capabilities")]
+struct Args {
+    #[arg(short, long, default_value = "http://127.0.0.1:8080")]
+    #[arg(help = "Target URL to proxy requests to")]
+    target: String,
+    
+    #[arg(short, long, default_value = "127.0.0.1:3000")]
+    #[arg(help = "Address to bind the proxy server to")]
+    bind: String,
+}
 
 #[tokio::main]
 async fn main() {
-    let intercept_rules: InterceptRules = Arc::new(RwLock::new(HashMap::new()));
+    let args = Args::parse();
+    
+    let app_state = AppState {
+        intercept_rules: Arc::new(RwLock::new(HashMap::new())),
+        target_url: args.target.clone(),
+    };
     
     let app = Router::new()
         .route("/control/{command}", post(control_handler))
         .fallback(proxy_handler)
-        .with_state(intercept_rules);
+        .with_state(app_state);
 
-    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
-    println!("Proxy server running on http://127.0.0.1:3000");
-    println!("Set TARGET_URL environment variable to specify the target server");
+    let listener = TcpListener::bind(&args.bind).await.unwrap();
+    println!("Proxy server running on http://{}", args.bind);
+    println!("Proxying requests to: {}", args.target);
     
     axum::serve(listener, app).await.unwrap();
 }
@@ -36,12 +59,12 @@ async fn main() {
 async fn control_handler(
     Path(command): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State(intercept_rules): State<InterceptRules>,
+    State(app_state): State<AppState>,
 ) -> Result<Response, StatusCode> {
     match command.as_str() {
         "block" => {
             if let Some(route) = params.get("route") {
-                let mut rules = intercept_rules.write().unwrap();
+                let mut rules = app_state.intercept_rules.write().unwrap();
                 rules.insert(route.clone(), InterceptAction::Block);
                 Response::builder()
                     .status(StatusCode::OK)
@@ -57,7 +80,7 @@ async fn control_handler(
 
 #[axum::debug_handler]
 async fn proxy_handler(
-    State(intercept_rules): State<InterceptRules>,
+    State(app_state): State<AppState>,
     request: Request,
 ) -> Result<Response, StatusCode> {
     let method = request.method().clone();
@@ -79,13 +102,11 @@ async fn proxy_handler(
             })
             .collect()
     };
-    let target_url = std::env::var("TARGET_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
     let client = Client::new();
     
     let should_block = {
-        let rules = intercept_rules.read().unwrap();
+        let rules = app_state.intercept_rules.read().unwrap();
         rules.get(path).is_some()
     };
     
@@ -93,7 +114,7 @@ async fn proxy_handler(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
     
-    let mut url = format!("{}{}", target_url, path);
+    let mut url = format!("{}{}", app_state.target_url, path);
     
     if !query.is_empty() {
         let query_string: Vec<String> = query
