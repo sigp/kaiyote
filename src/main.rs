@@ -1,9 +1,9 @@
 use axum::{
+    Router,
     extract::{Path, Query, Request, State},
     http::StatusCode,
     response::Response,
     routing::post,
-    Router,
 };
 use clap::Parser;
 use reqwest::Client;
@@ -29,7 +29,7 @@ struct Args {
     #[arg(short, long, default_value = "http://127.0.0.1:8080")]
     #[arg(help = "Target URL to proxy requests to")]
     target: String,
-    
+
     #[arg(short, long, default_value = "127.0.0.1:3000")]
     #[arg(help = "Address to bind the proxy server to")]
     bind: String,
@@ -38,12 +38,12 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    
+
     let app_state = AppState {
         intercept_rules: Arc::new(RwLock::new(HashMap::new())),
         target_url: args.target.clone(),
     };
-    
+
     let app = Router::new()
         .route("/control/{command}", post(control_handler))
         .fallback(proxy_handler)
@@ -52,7 +52,7 @@ async fn main() {
     let listener = TcpListener::bind(&args.bind).await.unwrap();
     println!("Proxy server running on http://{}", args.bind);
     println!("Proxying requests to: {}", args.target);
-    
+
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -88,11 +88,12 @@ async fn proxy_handler(
     let path = uri.path();
     let query_str = uri.query().unwrap_or("");
     let headers = request.headers().clone();
-    
+
     let query: HashMap<String, String> = if query_str.is_empty() {
         HashMap::new()
     } else {
-        query_str.split('&')
+        query_str
+            .split('&')
             .filter_map(|pair| {
                 let mut split = pair.split('=');
                 match (split.next(), split.next()) {
@@ -104,23 +105,20 @@ async fn proxy_handler(
     };
 
     let client = Client::new();
-    
+
     let should_block = {
         let rules = app_state.intercept_rules.read().unwrap();
         rules.get(path).is_some()
     };
-    
+
     if should_block {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
-    
+
     let mut url = format!("{}{}", app_state.target_url, path);
-    
+
     if !query.is_empty() {
-        let query_string: Vec<String> = query
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
+        let query_string: Vec<String> = query.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
         url = format!("{}?{}", url, query_string.join("&"));
     }
 
@@ -147,10 +145,13 @@ async fn proxy_handler(
 
     let status = response.status();
     let headers = response.headers().clone();
-    let body = response.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
     let mut resp_builder = Response::builder().status(status);
-    
+
     for (name, value) in headers.iter() {
         if name != "content-length" && name != "transfer-encoding" {
             resp_builder = resp_builder.header(name, value);
