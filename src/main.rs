@@ -1,9 +1,9 @@
 use axum::{
-    Router,
     extract::{Path, Query, Request, State},
     http::StatusCode,
     response::Response,
     routing::post,
+    Router,
 };
 use clap::Parser;
 use reqwest::Client;
@@ -69,6 +69,21 @@ async fn control_handler(
                 Response::builder()
                     .status(StatusCode::OK)
                     .body(axum::body::Body::from(format!("Route '{}' blocked", route)))
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            } else {
+                Err(StatusCode::BAD_REQUEST)
+            }
+        }
+        "unblock" => {
+            if let Some(route) = params.get("route") {
+                let mut rules = app_state.intercept_rules.write().unwrap();
+                rules.remove(&route[..]);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(axum::body::Body::from(format!(
+                        "Route '{}' unblocked",
+                        route
+                    )))
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
             } else {
                 Err(StatusCode::BAD_REQUEST)
