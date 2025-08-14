@@ -12,8 +12,8 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() {
     let app = Router::new()
-        .route("/*path", get(proxy_handler))
-        .route("/*path", post(proxy_handler))
+        .route("/{*path}", get(proxy_handler))
+        .route("/{*path}", post(proxy_handler))
         .route("/", get(proxy_handler))
         .route("/", post(proxy_handler));
 
@@ -26,7 +26,7 @@ async fn main() {
 
 async fn proxy_handler(
     method: Method,
-    Path(path): Path<String>,
+    opt_path: Option<Path<String>>,
     Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
     request: Request,
@@ -36,7 +36,11 @@ async fn proxy_handler(
 
     let client = Client::new();
     
-    let full_path = if path.is_empty() { "/".to_string() } else { format!("/{}", path) };
+    let full_path = if let Some(Path(path)) = opt_path {
+        format!("/{path}")
+    } else {
+        "/".to_string()
+    };
     let mut url = format!("{}{}", target_url, full_path);
     
     if !query.is_empty() {
