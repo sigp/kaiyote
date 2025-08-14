@@ -101,23 +101,8 @@ async fn proxy_handler(
     let method = request.method().clone();
     let uri = request.uri();
     let path = uri.path();
-    let query_str = uri.query().unwrap_or("");
+    let query_str = uri.query();
     let headers = request.headers().clone();
-
-    let query: HashMap<String, String> = if query_str.is_empty() {
-        HashMap::new()
-    } else {
-        query_str
-            .split('&')
-            .filter_map(|pair| {
-                let mut split = pair.split('=');
-                match (split.next(), split.next()) {
-                    (Some(key), Some(value)) => Some((key.to_string(), value.to_string())),
-                    _ => None,
-                }
-            })
-            .collect()
-    };
 
     let client = Client::new();
 
@@ -132,9 +117,8 @@ async fn proxy_handler(
 
     let mut url = format!("{}{}", app_state.target_url, path);
 
-    if !query.is_empty() {
-        let query_string: Vec<String> = query.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-        url = format!("{}?{}", url, query_string.join("&"));
+    if let Some(query) = query_str {
+        url = format!("{}?{}", url, query);
     }
 
     let body = axum::body::to_bytes(request.into_body(), usize::MAX)
