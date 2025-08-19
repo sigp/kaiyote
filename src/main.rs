@@ -1,24 +1,25 @@
 use axum::{
-    Router,
     extract::{Path, Query, Request, State},
     http::StatusCode,
     response::Response,
     routing::post,
+    Router,
 };
 use clap::Parser;
+use radix_trie::{Trie, TrieCommon};
 use reqwest::Client;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use tokio::net::TcpListener;
+use std::sync::Arc;
+use tokio::{net::TcpListener, sync::RwLock};
 
-#[derive(Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum InterceptAction {
     Block,
 }
 
 #[derive(Clone)]
 struct AppState {
-    intercept_rules: Arc<RwLock<HashMap<String, InterceptAction>>>,
+    intercept_rules: Arc<RwLock<Trie<String, InterceptAction>>>,
     target_url: String,
 }
 
@@ -40,7 +41,7 @@ async fn main() {
     let args = Args::parse();
 
     let app_state = AppState {
-        intercept_rules: Arc::new(RwLock::new(HashMap::new())),
+        intercept_rules: Arc::new(RwLock::new(Trie::new())),
         target_url: args.target.clone(),
     };
 
@@ -64,7 +65,7 @@ async fn control_handler(
     match command.as_str() {
         "block" => {
             if let Some(route) = params.get("route") {
-                let mut rules = app_state.intercept_rules.write().unwrap();
+                let mut rules = app_state.intercept_rules.write().await;
                 rules.insert(route.clone(), InterceptAction::Block);
                 println!("Blocking route {route}");
                 Response::builder()
@@ -77,7 +78,7 @@ async fn control_handler(
         }
         "unblock" => {
             if let Some(route) = params.get("route") {
-                let mut rules = app_state.intercept_rules.write().unwrap();
+                let mut rules = app_state.intercept_rules.write().await;
                 if rules.remove(&route[..]).is_some() {
                     println!("Unblocked route {route}");
                 } else {
@@ -112,8 +113,10 @@ async fn proxy_handler(
     let client = Client::new();
 
     let should_block = {
-        let rules = app_state.intercept_rules.read().unwrap();
-        rules.get(path).is_some()
+        let rules = app_state.intercept_rules.read().await;
+        rules.get_ancestor(path).map_or(false, |route_rules| {
+            route_rules.value() == Some(&InterceptAction::Block)
+        })
     };
 
     if should_block {
