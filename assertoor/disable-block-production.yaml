@@ -1,0 +1,15 @@
+id: disable-block-production
+name: "Disable block production"
+config:
+  snooper_node: null
+  snooper_port: 8562
+tasks:
+  - name: run_shell
+    title: "Disable block production"
+    shell: "bash"
+    config:
+      envVars: { "SNOOPER_NODE": snooper_node, "SNOOPER_PORT": snooper_port }
+      command: |
+        snooper_node_stripped=${SNOOPER_NODE//\"/}
+        echo "$snooper_node_stripped:$SNOOPER_PORT"
+        curl -X POST -v -s "http://$snooper_node_stripped:$SNOOPER_PORT/control/block?route=/eth/v3/validator/blocks"
